@@ -11,6 +11,8 @@ const Env = t.Object({
 		default: "file",
 	}),
 	STORE_FILE: t.String({ default: "./data/bookings.json" }),
+	DELIVERY_ACK_TIMEOUT_MS: t.Number({ default: 2000 }),
+	DELIVERY_MAX_BACKOFF_MS: t.Number({ default: 30_000 }),
 	DELIVERY_CHANNELS: t
 		.Transform(t.String({ default: CHANNEL_KINDS.join(",") }))
 		.Decode((value) => {
