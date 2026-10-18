@@ -13,6 +13,8 @@ services:
       OTEL_SERVICE_NAME: "${OTEL_SERVICE_NAME:-pentice-api}"
     # No host port: Dokploy's proxy routes the domain to this port, so
     # nothing on the server can clash with it.
+    ports:
+      - ${API_PUBLIC_PORT:-3000}
     expose:
       - "3000"
     volumes:
