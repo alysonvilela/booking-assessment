@@ -2,7 +2,6 @@ import { cors } from "@elysia/cors";
 import { swagger } from "@elysiajs/swagger";
 import { type Span, trace } from "@opentelemetry/api";
 import { Elysia, t } from "elysia";
-import { type EventBus, eventsPlugin, InMemoryEventBus } from "./domain/events";
 import { sqlClient } from "./infra/db";
 import { initializeOtel, shutdownOtel } from "./infra/otel";
 import { redis } from "./infra/redis";
@@ -20,10 +19,7 @@ const HealthBody = t.Object({
 	db: t.Union([t.Literal("up"), t.Literal("down")]),
 });
 
-/** Process-wide bus. Register subscribers once at boot (see below). */
-export const eventBus = new InMemoryEventBus();
-
-export const createApp = (deps: { eventBus?: EventBus } = {}) =>
+export const createApp = () =>
 	new Elysia()
 		.onRequest(({ request, store }) => {
 			const url = new URL(request.url);
@@ -59,9 +55,6 @@ export const createApp = (deps: { eventBus?: EventBus } = {}) =>
 			return { error: "internal error" };
 		})
 		.use(cors({ origin: env.WEB_ORIGINS, credentials: true }))
-		// Gives every request a collector (`context.events`) and dispatches the
-		// events it accumulated after the response is sent.
-		.use(eventsPlugin(deps.eventBus ?? eventBus))
 		.use(
 			swagger({
 				path: "/openapi",
@@ -97,9 +90,6 @@ export const createApp = (deps: { eventBus?: EventBus } = {}) =>
 export const app = createApp();
 
 if (import.meta.main) {
-	// Subscribers (usecases) are registered here, once, before serving traffic:
-	//   eventBus.subscribe<{ id: string }>("SomethingHappened", somethingUseCase);
-
 	const otel = tryCatchSync(() =>
 		initializeOtel(env.OTEL_SERVICE_NAME, env.OTEL_EXPORTER_OTLP_ENDPOINT),
 	);
