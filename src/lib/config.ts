@@ -5,7 +5,7 @@ import { Value } from "@sinclair/typebox/value";
  * Single source of configuration: the schema carries the defaults and the types,
  * and `Value.Parse` (Clean → Default → Convert → Assert) turns `process.env`
  * strings into number/list/boolean. No env is optional — anything missing falls
- * back to the local default (the same values as `docker compose up -d db`), and
+ * back to the local default (the same values as `docker compose up -d db redis`), and
  * anything malformed crashes the boot on import pointing at the field, instead
  * of silently becoming `undefined` mid-code.
  */
@@ -14,6 +14,7 @@ const Env = t.Object({
 	DATABASE_URL: t.String({
 		default: "postgres://sst:sst@localhost:5432/pentice_dev",
 	}),
+	REDIS_URL: t.String({ default: "redis://localhost:6379" }),
 	API_PORT: t.Number({ default: 3000 }),
 	WEB_ORIGINS: t
 		.Transform(t.String({ default: "http://localhost:3001" }))

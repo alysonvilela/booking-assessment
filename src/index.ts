@@ -4,6 +4,7 @@ import { type Span, trace } from "@opentelemetry/api";
 import { Elysia, t } from "elysia";
 import { sqlClient } from "./infra/db";
 import { initializeOtel, shutdownOtel } from "./infra/otel";
+import { redis } from "./infra/redis";
 import { env } from "./lib/config";
 import { logger } from "./lib/logger";
 import { errorMessage, isFail, tryCatch, tryCatchSync } from "./lib/result";
@@ -62,7 +63,7 @@ export const createApp = () =>
 						title: "Pentice API",
 						version: "1.0.0",
 						description:
-							"Boilerplate de API: Elysia + Drizzle/Postgres + OpenTelemetry.",
+							"API boilerplate: Elysia + Postgres + Valkey/Redis + OpenTelemetry.",
 					},
 					tags: [{ name: "health" }],
 				},
@@ -105,6 +106,7 @@ if (import.meta.main) {
 			await shutdownOtel();
 		});
 		await tryCatch(() => sqlClient.end());
+		await tryCatch(() => redis.quit());
 		process.exit(0);
 	};
 	process.once("SIGTERM", () => void shutdown("SIGTERM"));
