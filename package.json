@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch run src/index.ts",
-    "start": "bun run src/index.ts",
-    "build": "bun build src/index.ts --target bun --outdir dist",
+    "dev": "node init && bun --watch run src/index.ts",
+    "start": "node init && bun run src/index.ts",
+    "build": "node init && bun build src/index.ts --target bun --outdir dist",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "lint": "biome check src test",
@@ -21,7 +21,9 @@
     "@opentelemetry/sdk-node": "^0.48.0",
     "@opentelemetry/semantic-conventions": "^1.24.0",
     "@sinclair/typebox": "^0.34.41",
-    "elysia": "^1.2.0"
+    "dotenv": "^8.2.0",
+    "elysia": "^1.2.0",
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

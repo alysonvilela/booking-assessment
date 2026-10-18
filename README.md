@@ -133,6 +133,80 @@ flowchart TD
     WAIT -- "retry, no attempt limit" --> CHECK
 ```
 
+<details>
+<summary><b>Detailed view</b>: every branch, from the request to the redeem, including crash recovery</summary>
+
+```mermaid
+flowchart TD
+    classDef fail fill:#fde2e2,stroke:#c0392b,color:#000
+    classDef ok fill:#e3f6e8,stroke:#27ae60,color:#000
+    classDef store fill:#e8eefc,stroke:#2c5aa0,color:#000
+
+    subgraph IN["1 · Booking comes in"]
+        P["POST /bookings<br/>{reservationId, guest}"] --> V{"valid body?"}
+        V -- no --> V422["422 invalid data"]:::fail
+        V -- yes --> G["draw code<br/>first 5 chars of a UUID"]
+        G --> INS{"atomic insert"}
+        INS -- code_taken --> G
+        INS -- "reservation_taken,<br/>same guest" --> R200["200 existing booking<br/>no second code"]:::ok
+        INS -- "reservation_taken,<br/>other guest" --> R409["409 conflict"]:::fail
+        INS -- inserted --> DB[("store: booking<br/>status = pending")]:::store
+        DB --> SCH["schedule delivery job<br/>job id = code"]
+        SCH --> R201["201 {reservationId, status: pending}<br/>no code in the response"]:::ok
+    end
+
+    subgraph LOOP["2 · Delivery loop, retried until acked"]
+        SCH --> Q["EventEmitter queue<br/>one job per booking, never run twice at once"]
+        Q --> CHK{"booking already<br/>delivered?"}
+        CHK -- yes --> STOP["stop: nothing sent"]:::ok
+        CHK -- no --> PUSH["try push"]
+        PUSH -- unreachable --> HOOK["try webhook"]
+        HOOK -- unreachable --> MAIL["try email"]
+        MAIL -- unreachable --> NONE["no channel took it<br/>e.g. guest offline"]:::fail
+        PUSH -- sent --> REC
+        HOOK -- sent --> REC
+        MAIL -- sent --> REC
+        NONE --> REC["record attempt<br/>attempts++, lastChannel, lastError"]
+        REC --> WAIT["wait backoff = ack timeout<br/>2s, 4s, 8s … max 30s, ±20% jitter"]
+        WAIT --> Q
+        Q -. "handler throws<br/>e.g. store error" .-> QR["queue retries the job<br/>with backoff, no limit"]:::fail
+        QR -.-> Q
+    end
+
+    subgraph DEV["3 · Guest device (simulated)"]
+        PUSH -. message .-> D{"arrives?"}
+        HOOK -. message .-> D
+        MAIL -. message .-> D
+        D -- "lost in transit" --> LOST["server can't tell:<br/>no ack, so it resends"]:::fail
+        D -- yes --> DUP{"code already<br/>in the inbox?"}
+        DUP -- yes --> IGN["not shown again,<br/>only re-acked"]:::ok
+        DUP -- no --> SHOW["shown to the guest once"]:::ok
+        IGN --> ACK{"ack reaches<br/>the server?"}
+        SHOW --> ACK
+        ACK -- "lost" --> LOSTACK["no ack, so it resends;<br/>the device dedupes it"]:::fail
+    end
+
+    ACK -- yes --> HA["POST /webhooks/guest-ack"]
+    HA --> MD["markDelivered<br/>first ack wins, duplicates are no-ops"]
+    MD --> DB
+
+    subgraph OUT["4 · Code is used"]
+        GET["GET /:code"] --> RD{"atomic redeem"}
+        RD -- "first use" --> G200["200 booking + delivery status<br/>redeemedAt filled"]:::ok
+        RD -- "already used" --> G410["410 Gone"]:::fail
+        RD -- "unknown or malformed" --> G404["404"]:::fail
+    end
+    RD --- DB
+
+    subgraph BOOT["Crash or restart"]
+        CR["process dies<br/>timers are lost"]:::fail --> FILE[("JSON file still has<br/>every pending booking")]:::store
+        FILE --> RECV["on boot: re-queue every<br/>pending booking"]:::ok
+    end
+    RECV --> Q
+```
+
+</details>
+
 | Failure | What happens today | Proved by |
 | --- | --- | --- |
 | Guest offline / every channel down | Nothing goes out. The attempt is recorded and retried with backoff, forever | e2e: *keeps retrying while the guest is offline* |
@@ -214,6 +288,46 @@ database. Each one comes back behind a contract that already exists:
 | Code guessing | ~1M codes, single use | **Rate limiting** on `GET /:code` (per IP/key), longer codes, or the full `[a-z0-9]` alphabet | Middleware + `generateConfirmationCode` |
 | Retention | Bookings kept forever | **TTL / expiry** for codes and a cleanup job for old bookings | Repository + a scheduled job |
 | Observability | OTel spans per request, JSON logs, `/health` backlog | Metrics (delivery attempts, time to ack, backlog size) and alerts on a growing backlog | `config/otel.ts` |
+
+### How the production version would communicate
+
+The same flow on real infrastructure. It is close to an earlier design of
+this repo: the booking and its `BookingCreated` event are written in one
+transaction, an outbox publisher moves the event to Redis/BullMQ, and one job
+per booking runs the channels in failover order (push, then webhook, then
+email), never all three at once. Each channel has its own worker and
+provider. The guest's device acks through the API, and only the first valid
+ack marks the booking delivered. Without an ack, the job is retried with
+backoff.
+
+```mermaid
+flowchart TD
+    classDef store fill:#e8eefc,stroke:#2c5aa0,color:#000
+    classDef queue fill:#fff4e0,stroke:#d68910,color:#000
+    classDef ok fill:#e6f4ea,stroke:#1e8449,color:#000
+
+    POST["API: POST /bookings"] -- "one transaction" --> DB[("Postgres (Drizzle) / MongoDB<br/>bookings + outbox")]:::store
+    DB --> A["BookingCreated<br/>(outbox row)"]
+    A --> B["Outbox Publisher<br/>relay worker: publish, mark sent, retry / dead letter"]
+    B --> C[("Redis / BullMQ")]:::queue
+    C --> D["send_booking_otp<br/>job id = code, lock per booking"]:::queue
+    D -- "1st" --> G["send_booking_otp_push"]:::queue
+    D -. "2nd, if push is down" .-> F["send_booking_otp_webhook"]:::queue
+    D -. "3rd, if webhook is down" .-> E["send_booking_otp_email"]:::queue
+    G --> J["Push Worker<br/>FCM / APNs"]
+    F --> I["Webhook Worker<br/>signed POST"]
+    E --> H["Email Worker<br/>Resend / SES"]
+    J --> DEV["Guest device<br/>dedupes by code"]
+    I --> DEV
+    H --> DEV
+    DEV -- "ack with HMAC token" --> K["Delivery ACK<br/>API: POST /webhooks/guest-ack"]
+    K --> L{"Valid ack and OTP<br/>not delivered yet?"}
+    L -- yes --> M["Booking OTP Delivered<br/>status = delivered, ConfirmationDelivered → outbox"]:::ok
+    L -- "no (duplicate)" --> X["no-op"]
+    M --> DB
+    D -- "no ack before the backoff ends" --> N["Retry / Backoff<br/>2s, 4s, 8s … max 30s"]
+    N --> C
+```
 
 Suggested order: Postgres + outbox first (durability, and safe to run several
 instances), then BullMQ + locks (shared retries), then real channels with

@@ -12,8 +12,6 @@ coverage/
 data/
 
 # segredos e config local
-.env
-.env.*
 !.env.example
 
 # logs
@@ -25,4 +23,4 @@ yarn-error.*
 # editor / SO
 .DS_Store
 .idea/
-.vscode/
+config.bat
