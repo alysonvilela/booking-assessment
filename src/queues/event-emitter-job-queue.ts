@@ -5,7 +5,7 @@ import {
 	deliveryBackoff,
 } from "../lib/backoff";
 import { logger } from "../lib/logger";
-import { errorMessage } from "../lib/result";
+import { errorMessage, isOk, tryCatch } from "../lib/result";
 import type { DeliveryJob } from "../usecases/delivery-loop";
 import type {
 	Job,
@@ -75,23 +75,21 @@ export class EventEmitterJobQueue<T> implements JobQueue<T> {
 
 	private async run(job: Job<T>, handler: JobHandler<T>): Promise<void> {
 		this.active.add(job.id);
-		try {
-			await handler(job);
-		} catch (error) {
-			const attemptsMade = job.attemptsMade + 1;
-			const delayMs = backoffDelay(this.retry, attemptsMade);
-			logger.warn("job failed, retrying", {
-				queue: this.name,
-				jobId: job.id,
-				attemptsMade,
-				nextInMs: delayMs,
-				err: errorMessage(error),
-			});
-			if (!this.closed && !this.scheduled.has(job.id)) {
-				this.schedule({ ...job, attemptsMade }, delayMs);
-			}
-		} finally {
-			this.active.delete(job.id);
+		const result = await tryCatch(() => handler(job));
+		this.active.delete(job.id);
+		if (isOk(result)) return;
+
+		const attemptsMade = job.attemptsMade + 1;
+		const delayMs = backoffDelay(this.retry, attemptsMade);
+		logger.warn("job failed, retrying", {
+			queue: this.name,
+			jobId: job.id,
+			attemptsMade,
+			nextInMs: delayMs,
+			err: errorMessage(result.error),
+		});
+		if (!this.closed && !this.scheduled.has(job.id)) {
+			this.schedule({ ...job, attemptsMade }, delayMs);
 		}
 	}
 }

@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createBooking } from "../../src/domains/booking";
 import { generateConfirmationCode } from "../../src/domains/confirmation-code";
@@ -116,5 +116,17 @@ describe("JsonFileBookingRepository", () => {
 
 		const reloaded = new JsonFileBookingRepository(path);
 		expect(await reloaded.listPending()).toHaveLength(50);
+	});
+
+	it("a corrupt file fails cleanly and recovers once it's fixed", async () => {
+		const path = await tempFile();
+		await mkdir(dirname(path), { recursive: true });
+		await writeFile(path, "{ not json");
+		const repo = new JsonFileBookingRepository(path);
+
+		await expect(repo.listPending()).rejects.toThrow("not valid JSON");
+
+		await writeFile(path, JSON.stringify({ version: 1, bookings: [] }));
+		expect(await repo.listPending()).toEqual([]);
 	});
 });

@@ -2,8 +2,15 @@ import { app } from "./app";
 import { env } from "./config/env";
 import { initializeOtel, shutdownOtel } from "./config/otel";
 import { logger } from "./lib/logger";
-import { isFail, tryCatch, tryCatchSync } from "./lib/result";
+import { errorMessage, isFail, tryCatch, tryCatchSync } from "./lib/result";
 import { deliveryLoop } from "./usecases/delivery-loop";
+
+process.on("unhandledRejection", (reason) => {
+	logger.error("unhandled rejection", { err: errorMessage(reason) });
+});
+process.on("uncaughtException", (error) => {
+	logger.error("uncaught exception", { err: errorMessage(error) });
+});
 
 const otel = tryCatchSync(() =>
 	initializeOtel(env.OTEL_SERVICE_NAME, env.OTEL_EXPORTER_OTLP_ENDPOINT),

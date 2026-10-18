@@ -5,7 +5,7 @@ import {
 	GuestUnreachableError,
 } from "../channels/channel";
 import { logger } from "../lib/logger";
-import { errorMessage, isOk } from "../lib/result";
+import { errorMessage, isFail, isOk, tryCatch } from "../lib/result";
 import { acknowledgeConfirmationUseCase } from "../usecases/acknowledge-confirmation";
 
 export type DeviceMode = {
@@ -92,17 +92,20 @@ export class DeviceSimulator implements GuestDevice {
 		}
 
 		const dropAck = Math.random() < this.mode.dropAckRate;
-		setTimeout(() => {
+		setTimeout(async () => {
 			if (dropAck) {
 				logger.warn("device: ack lost in transit", { channel, ...message });
 				return;
 			}
-			this.sendAck(message.confirmationCode).catch((error) => {
+			const acked = await tryCatch(() =>
+				this.sendAck(message.confirmationCode),
+			);
+			if (isFail(acked)) {
 				logger.warn("device: ack failed", {
 					...message,
-					err: errorMessage(error),
+					err: errorMessage(acked.error),
 				});
-			});
+			}
 		}, this.mode.ackDelayMs).unref?.();
 	}
 }

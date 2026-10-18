@@ -141,6 +141,8 @@ flowchart TD
 | Code collision | The insert refuses the taken code and a new one is drawn | usecase: *draws again on a code collision* |
 | Code used twice (even concurrently) | The atomic redeem lets the first use win; the rest get `410` | e2e + repository: *works once* / *redeems a code once* |
 | Crash mid-write of the file | Written to a temp file, then `rename`d, so the old file stays intact | by design (atomic rename) |
+| Store unreadable at boot (e.g. corrupt file) | The app still starts: `/health` answers `503` and recovery retries with backoff. Once the file is fixed, the pending bookings resume with no restart | repository: *a corrupt file fails cleanly*; delivery loop: *keeps retrying the boot recovery*; checked by hand on a live server |
+| Any error a handler misses | Logged by a process-wide `unhandledRejection` / `uncaughtException` handler instead of killing the process. HTTP errors become a `500` | by design |
 
 ### Single-use codes
 
@@ -165,6 +167,14 @@ delivery + an idempotent receiver**:
 - **Device side:** the device dedupes by confirmation code. A redelivered copy
   isn't shown again; it's only re-acked (`GET /simulator/device` shows
   `timesReceived` vs. one inbox entry). The guest sees each confirmation once.
+
+### Errors as values
+
+Code that can fail at runtime uses the `Result` helpers in `lib/result.ts`
+(`tryCatch`, `isOk`/`isFail`) instead of `try/catch`, so a failure is a value
+the caller has to handle. Use cases return `ok(...)` / `fail(message, status)`,
+and controllers map them to HTTP codes. Nothing in the background (queue
+jobs, timers, device acks, boot recovery) can reject without being handled.
 
 ## Decisions & assumptions
 

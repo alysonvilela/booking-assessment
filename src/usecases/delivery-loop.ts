@@ -4,6 +4,7 @@ import {
 	deliveryBackoff,
 } from "../lib/backoff";
 import { logger } from "../lib/logger";
+import { errorMessage, isOk, tryCatch } from "../lib/result";
 import { deliveryQueue } from "../queues/event-emitter-job-queue";
 import type { JobQueue } from "../queues/job-queue";
 import {
@@ -32,7 +33,7 @@ export class DeliveryLoop implements DeliveryScheduler {
 		if (this.started) return;
 		this.started = true;
 		this.process();
-		await this.recover();
+		await this.recoverUntilDone();
 	}
 
 	async stop(): Promise<void> {
@@ -51,6 +52,20 @@ export class DeliveryLoop implements DeliveryScheduler {
 
 	async schedule(confirmationCode: string): Promise<void> {
 		await this.queue.add(confirmationCode, { confirmationCode });
+	}
+
+	private async recoverUntilDone(attempt = 1): Promise<void> {
+		const recovered = await tryCatch(() => this.recover());
+		if (isOk(recovered)) return;
+		const delayMs = backoffDelay(this.policy, attempt);
+		logger.error("delivery: could not resume pending bookings, retrying", {
+			attempt,
+			nextInMs: delayMs,
+			err: errorMessage(recovered.error),
+		});
+		setTimeout(() => {
+			void this.recoverUntilDone(attempt + 1);
+		}, delayMs).unref?.();
 	}
 
 	private async recover(): Promise<number> {

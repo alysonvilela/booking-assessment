@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Booking } from "../domains/booking";
+import { isFail, tryCatch, tryCatchSync } from "../lib/result";
 import { InMemoryBookingRepository } from "./in-memory-booking-repository";
 
 type FileShape = { version: 1; bookings: Booking[] };
@@ -14,8 +15,12 @@ export class JsonFileBookingRepository extends InMemoryBookingRepository {
 	}
 
 	protected override async ready(): Promise<void> {
-		this.loading ??= this.load();
-		await this.loading;
+		const loading = (this.loading ??= this.load());
+		const loaded = await tryCatch(() => loading);
+		if (isFail(loaded)) {
+			this.loading = null;
+			throw loaded.error;
+		}
 	}
 
 	protected override persist(): Promise<void> {
@@ -23,22 +28,22 @@ export class JsonFileBookingRepository extends InMemoryBookingRepository {
 			version: 1,
 			bookings: [...this.byCode.values()],
 		};
-		this.writing = this.writing
-			.catch(() => {})
-			.then(() => this.write(snapshot));
+		const previous = this.writing;
+		this.writing = tryCatch(() => previous).then(() => this.write(snapshot));
 		return this.writing;
 	}
 
 	private async load(): Promise<void> {
-		let raw: string;
-		try {
-			raw = await readFile(this.path, "utf8");
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-			throw error;
+		const raw = await tryCatch(() => readFile(this.path, "utf8"));
+		if (isFail(raw)) {
+			if ((raw.error as NodeJS.ErrnoException).code === "ENOENT") return;
+			throw raw.error;
 		}
-		const data = JSON.parse(raw) as FileShape;
-		for (const booking of data.bookings) this.put(booking);
+		const data = tryCatchSync(() => JSON.parse(raw.value) as FileShape);
+		if (isFail(data)) {
+			throw new Error(`store file ${this.path} is not valid JSON`);
+		}
+		for (const booking of data.value.bookings) this.put(booking);
 	}
 
 	private async write(snapshot: FileShape): Promise<void> {

@@ -1,7 +1,7 @@
 import { channels } from "../channels";
 import type { NotificationChannel } from "../channels/channel";
 import { logger } from "../lib/logger";
-import { errorMessage } from "../lib/result";
+import { errorMessage, isOk, tryCatch } from "../lib/result";
 import {
 	type BookingRepository,
 	bookingRepository,
@@ -38,13 +38,12 @@ export class DeliverConfirmationUseCase {
 		let channel: string | null = null;
 		const errors: string[] = [];
 		for (const candidate of this.channels) {
-			try {
-				await candidate.send(booking.guest, message);
+			const sent = await tryCatch(() => candidate.send(booking.guest, message));
+			if (isOk(sent)) {
 				channel = candidate.kind;
 				break;
-			} catch (cause) {
-				errors.push(errorMessage(cause));
 			}
+			errors.push(errorMessage(sent.error));
 		}
 
 		const updated = await this.bookings.recordAttempt(confirmationCode, {
