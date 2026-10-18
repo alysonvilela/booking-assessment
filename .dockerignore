@@ -1,0 +1,23 @@
+node_modules
+dist
+coverage
+.turbo
+*.log
+
+# segredos e config local
+.env
+.env.*
+!.env.example
+
+# git / editor / CI
+.git
+.github
+.claude
+.vscode
+.idea
+.DS_Store
+
+# docs e testes não entram na imagem
+docs
+test
+*.md
