@@ -11,10 +11,8 @@ services:
       WEB_ORIGINS: "${WEB_ORIGINS:-http://localhost:3001}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318/v1/traces}"
       OTEL_SERVICE_NAME: "${OTEL_SERVICE_NAME:-pentice-api}"
-    # No host port: Dokploy's proxy routes the domain to this port, so
-    # nothing on the server can clash with it.
     ports:
-      - ${API_PUBLIC_PORT:-3000}
+      - "${API_PUBLIC_PORT:-3000}:3000"
     volumes:
       - pentice-data:/app/data
     # Tracing is optional: the API starts even if Jaeger is unhealthy.
