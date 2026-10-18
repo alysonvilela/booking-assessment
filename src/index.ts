@@ -2,8 +2,8 @@ import { cors } from "@elysia/cors";
 import { swagger } from "@elysiajs/swagger";
 import { type Span, trace } from "@opentelemetry/api";
 import { Elysia, t } from "elysia";
-import { initializeOtel, shutdownOtel } from "./infra/otel";
-import { env } from "./lib/config";
+import { env } from "./config/env";
+import { initializeOtel, shutdownOtel } from "./config/otel";
 import { logger } from "./lib/logger";
 import { errorMessage, isFail, tryCatch, tryCatchSync } from "./lib/result";
 
