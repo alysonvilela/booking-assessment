@@ -8,6 +8,9 @@ dist/
 # testes
 coverage/
 
+# JSON store (STORE_DRIVER=file)
+data/
+
 # segredos e config local
 .env
 .env.*

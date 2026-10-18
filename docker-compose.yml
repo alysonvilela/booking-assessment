@@ -5,6 +5,14 @@ services:
       dockerfile: Dockerfile
     environment:
       API_PORT: 3000
+      STORE_DRIVER: file
+      STORE_FILE: /app/data/bookings.json
       WEB_ORIGINS: http://localhost:3001,http://localhost:5273
     ports:
       - "3000:3000"
+    # The JSON store lives on a volume, so pending deliveries survive restarts.
+    volumes:
+      - pentice-data:/app/data
+
+volumes:
+  pentice-data:

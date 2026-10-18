@@ -3,6 +3,10 @@ import { Value } from "@sinclair/typebox/value";
 
 const Env = t.Object({
 	NODE_ENV: t.String({ default: "development" }),
+	STORE_DRIVER: t.Union([t.Literal("file"), t.Literal("memory")], {
+		default: "file",
+	}),
+	STORE_FILE: t.String({ default: "./data/bookings.json" }),
 	API_PORT: t.Number({ default: 3000 }),
 	WEB_ORIGINS: t
 		.Transform(t.String({ default: "http://localhost:3001" }))
