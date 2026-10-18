@@ -26,6 +26,12 @@ bun run test           # vitest, no services needed
 # or: docker compose up --build
 ```
 
+**Dokploy:** use `docker-compose.dokploy.yml`. It publishes no host ports, so
+it can't clash with other apps on the server. In Dokploy, add a domain on the
+`api` service, port `3000` (and on `jaeger`, port `16686`, to open the
+tracing UI). The API sends traces to Jaeger over the internal network and
+starts even if Jaeger is down.
+
 The brief's example:
 
 ```bash
