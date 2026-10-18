@@ -15,8 +15,6 @@ services:
     # nothing on the server can clash with it.
     ports:
       - ${API_PUBLIC_PORT:-3000}
-    expose:
-      - "3000"
     volumes:
       - pentice-data:/app/data
     # Tracing is optional: the API starts even if Jaeger is unhealthy.
