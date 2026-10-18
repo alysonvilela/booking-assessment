@@ -1,6 +1,5 @@
 type Level = "info" | "warn" | "error";
 
-/** Structured JSON log. Don't log secrets. */
 function emit(
 	level: Level,
 	msg: string,

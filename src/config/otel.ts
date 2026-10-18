@@ -5,11 +5,6 @@ import { SEMRESATTRS_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
 let sdk: NodeSDK | undefined;
 
-/**
- * Starts the NodeSDK with the OTLP exporter. Empty endpoint = telemetry off
- * (local behavior): no global provider is registered and spans become no-ops —
- * which is what makes `trace.getTracer(...).startSpan(...)` safe in dev.
- */
 export function initializeOtel(serviceName: string, endpoint: string) {
 	if (!endpoint) return undefined;
 	sdk = new NodeSDK({

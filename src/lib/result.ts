@@ -18,13 +18,6 @@ export const isOk = <T, E>(result: Result<T, E>): result is Ok<T> =>
 export const isFail = <T, E>(result: Result<T, E>): result is Fail<E> =>
 	result._tag === "fail";
 
-/**
- * Wraps I/O that can throw, turning it into `ok`/`fail`.
- *
- * Without `onError` the error is `unknown` — which is the truth: `catch` receives
- * anything (`throw "text"` is legal), so typing it as `Error` would be an
- * unchecked cast. Pass `onError` to get an error with an exact type.
- */
 export function tryCatch<T>(fn: () => Promise<T>): Promise<Result<T, unknown>>;
 export function tryCatch<T, E>(
 	fn: () => Promise<T>,
@@ -41,7 +34,6 @@ export async function tryCatch<T, E>(
 	}
 }
 
-/** Synchronous version of `tryCatch`. */
 export function tryCatchSync<T>(fn: () => T): Result<T, unknown>;
 export function tryCatchSync<T, E>(
 	fn: () => T,
@@ -58,6 +50,5 @@ export function tryCatchSync<T, E>(
 	}
 }
 
-/** Human-readable message from an `unknown` caught in `catch`. */
 export const errorMessage = (error: unknown): string =>
 	error instanceof Error ? error.message : String(error);
