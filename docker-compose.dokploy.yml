@@ -5,8 +5,6 @@ services:
       dockerfile: Dockerfile
     environment:
       NODE_ENV: "${NODE_ENV:-production}"
-      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
-      REDIS_URL: "${REDIS_URL:?REDIS_URL is required}"
       # Fixed at 3000 inside the container to match the Dockerfile EXPOSE and
       # HEALTHCHECK. The published port is `API_PUBLIC_PORT`.
       API_PORT: "3000"

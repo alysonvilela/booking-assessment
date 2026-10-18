@@ -6,13 +6,11 @@
   "scripts": {
     "dev": "bun --watch run src/index.ts",
     "start": "bun run src/index.ts",
-    "build": "bun build src/index.ts src/db/migrate.ts --target bun --outdir dist",
+    "build": "bun build src/index.ts --target bun --outdir dist",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "lint": "biome check src test",
-    "format": "biome format --write src test",
-    "db:migrate": "bun run src/db/migrate.ts",
-    "db:generate": "drizzle-kit generate"
+    "format": "biome format --write src test"
   },
   "dependencies": {
     "@elysia/cors": "^1.4.2",
@@ -23,15 +21,11 @@
     "@opentelemetry/sdk-node": "^0.48.0",
     "@opentelemetry/semantic-conventions": "^1.24.0",
     "@sinclair/typebox": "^0.34.41",
-    "drizzle-orm": "^0.45.2",
-    "elysia": "^1.2.0",
-    "ioredis": "^6.0.0",
-    "postgres": "^3.4.7"
+    "elysia": "^1.2.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@types/node": "^22.0.0",
-    "drizzle-kit": "^0.31.4",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
