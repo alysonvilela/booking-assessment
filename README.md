@@ -9,6 +9,14 @@ an OTP, a code that was already used answers `410 Gone`.
 No database and no external services: bookings live in memory or in a JSON
 file, behind an async repository.
 
+> **This is a deliberately simplified version.** The brief rules out a
+> database, so storage, queueing and locking all run inside one process. Every
+> one of them sits behind a contract (`BookingRepository`, `JobQueue`,
+> `NotificationChannel`). The production pieces — Postgres via Drizzle (or
+> another ORM, or MongoDB), Redis/BullMQ, an outbox for domain events — plug
+> in behind those contracts without touching the use cases. See
+> [Next steps: production version](#next-steps-production-version).
+
 ## Run it
 
 ```bash
@@ -85,6 +93,55 @@ sequenceDiagram
 5. **Survives restarts.** With `STORE_DRIVER=file`, the delivery loop re-queues
    every `pending` booking on boot.
 
+### What happens when something fails
+
+The full path of a confirmation as it works today. Red boxes are failures.
+Every one of them leads back to the same retry, and the only way out of the
+loop is the guest's ack.
+
+```mermaid
+flowchart TD
+    classDef fail fill:#fdecea,stroke:#c0392b,color:#000
+    classDef ok fill:#e6f4ea,stroke:#1e8449,color:#000
+    classDef store fill:#e8eefc,stroke:#2c5aa0,color:#000
+
+    POST["POST /bookings"] --> SAVE[("Store<br/>booking: pending")]:::store
+    SAVE --> JOB["Queue a delivery job<br/>(one per booking)"]
+    CRASH["Crash / restart<br/>timers lost"]:::fail -. "on boot: re-queue<br/>every pending booking" .-> JOB
+
+    JOB --> CHECK{"Already<br/>acknowledged?"}
+    CHECK -- yes --> DONE["Stop — never sent again"]:::ok
+    CHECK -- no --> SEND["Send on the first channel that works<br/>push → webhook → email"]
+
+    SEND --> R{"What happened?"}
+    R -- "all channels down<br/>(guest offline)" --> F1["Nothing sent"]:::fail
+    R -- "message lost<br/>in transit" --> F2["Sent, never arrived"]:::fail
+    R -- "arrived" --> DEV["Device shows it once<br/>(a copy it already has is only re-acked)"]:::ok
+    DEV -- "ack lost" --> F3["Arrived, ack never came back"]:::fail
+    DEV -- "ack arrives" --> ACK["POST /webhooks/guest-ack<br/>booking → delivered"]:::ok
+    ACK --> SAVE
+
+    F1 --> WAIT["No ack yet: record the attempt,<br/>wait 2s → 4s → 8s … max 30s"]
+    F2 --> WAIT
+    F3 --> WAIT
+    WAIT -- "retry, no attempt limit" --> CHECK
+```
+
+| Failure | What happens today | Proved by |
+| --- | --- | --- |
+| Guest offline / every channel down | Nothing goes out. The attempt is recorded and retried with backoff, forever | e2e: *keeps retrying while the guest is offline* |
+| One channel down | The same attempt falls over to the next channel (push → webhook → email), still one message | e2e: *fails over to the next channel* |
+| Message lost in transit | No ack arrives, so it is resent after the backoff | e2e: *redelivers a message lost in transit* |
+| Ack lost on the way back | Resent; the device already has the code, so it only re-acks and the guest doesn't see it again | e2e: *redelivers when the ack is lost* |
+| Late or duplicate ack | No-op: the first ack wins, and the loop sends nothing once acked | e2e: *stops sending once acknowledged* |
+| Store error during a delivery | The job throws and the queue retries it with backoff, no limit | queue: *retries a throwing handler* |
+| Crash / restart | Pending bookings are in the JSON file, and on boot every one is queued again | repository: *survives a restart*; checked by hand on a live server |
+| Two runs for the same booking | The queue never runs the same job id twice at once | queue: *never runs the same id concurrently* |
+| Same reservation POSTed twice | The atomic insert keeps one booking: `200` replay, `409` for another guest | e2e: *a repeated POST … never mints a second code* |
+| Code collision | The insert refuses the taken code and a new one is drawn | usecase: *draws again on a code collision* |
+| Code used twice (even concurrently) | The atomic redeem lets the first use win; the rest get `410` | e2e + repository: *works once* / *redeems a code once* |
+| Crash mid-write of the file | Written to a temp file, then `rename`d, so the old file stays intact | by design (atomic rename) |
+
 ### Single-use codes
 
 `GET /:code` *uses* the code. The first call fills `redeemedAt` and returns the
@@ -117,16 +174,34 @@ delivery + an idempotent receiver**:
 | Device simulated in-process | Lets tests and demos control offline, an unreachable channel, a lost message or a lost ack precisely. A real device would call `POST /webhooks/guest-ack`, which runs the same usecase the simulator calls. |
 | Codes: first 5 chars of `crypto.randomUUID()` | Simple and random (a v4 UUID's version bits come later). Hex, so letters + digits, 16⁵ ≈ 1M codes. Collisions are handled by the atomic insert (draw again). Trade-off: a smaller space than full `[a-z0-9]` (60M), so easier to guess. Single use limits the damage, and rate limiting `GET /:code` would be the next step. |
 | Uniqueness via atomic `insert` | Check-then-save would let two concurrent requests take one code. `insert` refuses a taken code (we regenerate) or reservation (idempotent replay, or `409` if the guest differs). Tested with 1000 concurrent bookings. |
-| Store: JSON file (default) or memory | Spec: no DB, async I/O. Writes go to a temp file, are `rename`d into place (atomic) and are serialised. Fine for one process. A real system would use a real store. |
-| Queue: in-process, on Node `EventEmitter` | Same contract a Redis/BullMQ queue would have (job id dedupe, delays, retry with backoff), with no infrastructure. Durability comes from the store, not the queue. |
+| Store: JSON file (default) or memory | Spec: no DB, async I/O. Writes go to a temp file, are `rename`d into place (atomic) and are serialised. Fine for one process; production swaps in Postgres/Drizzle or MongoDB ([next steps](#next-steps-production-version)). |
+| Queue: in-process, on Node `EventEmitter` | Same contract a Redis/BullMQ queue would have (job id dedupe, delays, retry with backoff), with no infrastructure. Durability comes from the store, not the queue. Production swaps in BullMQ. |
 | `POST /bookings` → `201` new, `200` replay | Lets clients retry safely. |
 
-**Limits (single process by design):** the in-memory maps, the file store and
-the queue assume one instance. To scale out: move the store to a real database
-(conditional update for `markDelivered`), the queue to a shared broker behind
-the same `JobQueue` port, and add a lease so only one node sends a given
-booking. Retention/expiry of old bookings and auth on the ack endpoint (e.g. an
-HMAC-signed delivery token) are out of scope.
+## Next steps: production version
+
+The simplified version runs as a **single process**: the in-memory maps, the
+JSON file and the `EventEmitter` queue all assume one instance. An earlier
+iteration of this repo had Postgres/Drizzle, Redis/BullMQ, an outbox and
+Redis-backed idempotency. They were removed only because the brief forbids a
+database. Each one comes back behind a contract that already exists:
+
+| Concern | Now (simplified) | Production | Where it plugs in |
+| --- | --- | --- | --- |
+| Booking storage | Memory / JSON file | **Postgres via Drizzle** (or Prisma, or **MongoDB**). Unique indexes on `confirmation_code` and `reservation_id` replace the in-process check-and-set. `markDelivered` and `redeem` become conditional updates (`… WHERE status = 'pending'`, `… WHERE redeemed_at IS NULL`) | A new `BookingRepository` adapter. `STORE_DRIVER` picks it |
+| Delivery queue | `EventEmitterJobQueue` (timers in memory) | **Redis + BullMQ**: delayed jobs, `jobId` dedupe, exponential backoff, a failed-jobs view and replay, shared by every instance | A new `JobQueue` adapter, same contract (`add` with `id`/`delayMs`, `process`) |
+| Domain events | None. A `pending` booking doubles as the outbox entry | **Outbox pattern**. `BookingCreated`, `ConfirmationDelivered` and `ConfirmationRedeemed` are written to an `outbox` table **in the same transaction** as the booking change. A relay reads the pending rows, publishes them (queue or bus), and marks them sent with retries and a dead-letter state. No event is lost if the process dies between "saved" and "published" | Use cases record events; the repository transaction persists them; a relay worker publishes |
+| One sender per booking | Queue never runs the same id twice (in-process) | A **Redis lock / lease** (`SET key NX PX ttl`) or the queue's own job locking, so two nodes never deliver the same booking at once | Delivery loop / queue adapter |
+| Idempotent `POST /bookings` | Natural key: `reservationId` | Also an **`Idempotency-Key` header** stored in Redis with the response, replayed for duplicates | A small middleware in front of the controller |
+| Channels | Simulated (log + in-process device) | Real providers: FCM/APNs for push, signed HTTP webhooks, an email provider (Resend, SES…) | New `NotificationChannel` subclasses, same `send()` |
+| Ack endpoint security | Anyone with a code can ack | **HMAC-signed delivery token** in each message, verified on `POST /webhooks/guest-ack` | Ack controller / use case |
+| Code guessing | ~1M codes, single use | **Rate limiting** on `GET /:code` (per IP/key), longer codes, or the full `[a-z0-9]` alphabet | Middleware + `generateConfirmationCode` |
+| Retention | Bookings kept forever | **TTL / expiry** for codes and a cleanup job for old bookings | Repository + a scheduled job |
+| Observability | OTel spans per request, JSON logs, `/health` backlog | Metrics (delivery attempts, time to ack, backlog size) and alerts on a growing backlog | `config/otel.ts` |
+
+Suggested order: Postgres + outbox first (durability, and safe to run several
+instances), then BullMQ + locks (shared retries), then real channels with
+signed acks, then rate limiting and retention.
 
 ## Layout
 
